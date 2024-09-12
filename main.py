@@ -1,127 +1,98 @@
 import os
-import yt_dlp
-import json
-from mutagen.mp3 import MP3
-from mutagen.id3 import ID3, TIT2, TPE1
-from tkinter import Tk
-from tkinter.filedialog import askdirectory
+import threading
+from textual.app import App, ComposeResult
+from textual.widgets import Header, Footer, Input, Button, Static, DataTable
+from ytmusicapi import YTMusic
+import tools  # Import the tools module for downloading
 
-# Function to download a YouTube Music playlist as MP3 and rename files
-def download_playlist(playlist_url, download_folder):
-    if not os.path.exists(download_folder):
-        os.makedirs(download_folder)
 
-    # Define yt-dlp options with metadata extraction
-    ydl_opts = {
-        'format': 'bestaudio/best',
-        'outtmpl': f'{download_folder}/%(title)s.%(ext)s',  
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '192',
-        }],
-        'quiet': False,
-        'noplaylist': False,
-        'writesubtitles': False,
-        'writethumbnail': False,
-        'writeinfojson': True,  
-    }
+class YouTubeMusicPlaylistApp(App):
 
-    # Download the entire playlist from the given URL
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([playlist_url])
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.ytmusic = YTMusic()
+        self.playlist_data = None
+        self.playlist_url = None  # To store the playlist URL for downloading
+        self.download_folder = os.path.expanduser("~/Downloads")  # Default download folder
 
-    # Rename and set MP3 metadata
-    rename_and_tag_mp3_files(download_folder)
-    # Clean up additional files
-    clean_up_files(download_folder)
+    def compose(self) -> ComposeResult:
+        # Define the UI structure
+        yield Header()
+        yield Static("Enter YouTube Music Playlist URL below:", id="instruction")
+        yield Input(placeholder="Enter YouTube Music Playlist Link", id="playlist_link")
+        yield Button("Load Playlist", id="load_button")
+        yield DataTable(id="playlist_table", show_header=True)
+        yield Button("Download Playlist", id="download_button")  # Button to trigger download
+        yield Static(id="status")
+        yield Footer()
 
-# Function to rename downloaded files based on the metadata from yt-dlp
-def rename_and_tag_mp3_files(download_folder):
-    for filename in os.listdir(download_folder):
-        if filename.endswith('.mp3'):
-            # Get corresponding .info.json file for the metadata
-            info_json = filename.replace('.mp3', '.info.json')
-            json_path = os.path.join(download_folder, info_json)
-            
-            if os.path.exists(json_path):
-                with open(json_path, 'r', encoding='utf-8') as f:
-                    metadata = json.load(f)
+    def on_mount(self) -> None:
+        # Called after the application is mounted
+        self.query_one("#playlist_table", DataTable).add_columns("No.", "Song", "Artist", "Duration")
 
-                try:
-                    # Attempt to extract artist name from metadata
-                    artist_name = (
-                        metadata.get('artist') or  # First try 'artist'
-                        metadata.get('uploader') or  # Fallback to 'uploader'
-                        metadata.get('channel') or  # Fallback to 'channel'
-                        'Unknown Artist'  # Default if not found
-                    )
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "load_button":
+            playlist_link = self.query_one("#playlist_link", Input).value
+            self.playlist_url = playlist_link  # Save the playlist URL for download
+            playlist_id = self.extract_playlist_id(playlist_link)
 
-                    # Extract song title, if available, or fallback to 'Unknown Title'
-                    song_name = metadata.get('track') or metadata.get('title') or 'Unknown Title'
+            if playlist_id:
+                self.load_playlist(playlist_id)
+            else:
+                self.update_status("Invalid YouTube Music Playlist URL.")
 
-                    new_filename = f"{song_name} - {artist_name}.mp3"
-                    old_file = os.path.join(download_folder, filename)
-                    new_file = os.path.join(download_folder, new_filename)
+        elif event.button.id == "download_button":
+            if self.playlist_url and self.download_folder:
+                # Start the download process in a new thread
+                threading.Thread(target=self.download_playlist, args=(self.playlist_url, self.download_folder)).start()
+            else:
+                self.update_status("Playlist URL or download folder not selected.")
 
-                    os.rename(old_file, new_file)
+    def extract_playlist_id(self, url: str) -> str:
+        import re
+        # Extract playlist ID from YouTube Music URL
+        match = re.search(r"list=([a-zA-Z0-9_-]+)", url)
+        return match.group(1) if match else None
 
-                    # Add ID3 tags (MP3 metadata)
-                    audio = MP3(new_file, ID3=ID3)
-                    audio.tags.add(TIT2(encoding=3, text=song_name))  # Set song title tag
-                    audio.tags.add(TPE1(encoding=3, text=artist_name))  # Set artist tag
-                    audio.save()
+    def load_playlist(self, playlist_id: str) -> None:
+        try:
+            # Fetch playlist information using YTMusicAPI
+            playlist_info = self.ytmusic.get_playlist(playlist_id)
+            playlist_title = playlist_info['title']
+            tracks = playlist_info['tracks']
 
-                    print(f"Renamed and tagged: {new_filename}")
+            # Update playlist info
+            table = self.query_one("#playlist_table", DataTable)
+            table.clear()
 
-                except Exception as e:
-                    print(f"Error processing metadata for {filename}: {e}")
+            for idx, track in enumerate(tracks, start=1):
+                song_title = track['title']
+                artist_name = ", ".join(artist['name'] for artist in track['artists'])
+                duration = track['duration']  # Duration of the song
+                table.add_row(str(idx), song_title, artist_name, duration)
 
-# Function to clean up unnecessary files like .info.json and .webm
-def clean_up_files(download_folder):
-    for filename in os.listdir(download_folder):
-        if filename.endswith('.info.json') or filename.endswith('.webm'):
-            file_path = os.path.join(download_folder, filename)
-            try:
-                os.remove(file_path)
-                print(f"Deleted: {filename}")
-            except Exception as e:
-                print(f"Error deleting {filename}: {e}")
+            self.update_status(f"Loaded playlist: {playlist_title}")
 
-# Main application loop
-def main():
-    print("Welcome to the YouTube Music Downloader!")
+        except Exception as e:
+            self.update_status(f"Error loading playlist: {e}")
 
-    # Use tkinter to open a folder picker dialog
-    root = Tk()
-    root.withdraw()  # Hide the root window
-    selected_folder = askdirectory(title="Select Download Location")  # Open the folder picker dialog
-    
-    if not selected_folder:
-        print("No folder selected! Exiting...")
-        return
-    
-    # Create a "downloads" folder inside the selected location
-    download_folder = os.path.join(selected_folder, "downloads")
-    
-    if not os.path.exists(download_folder):
-        os.makedirs(download_folder)  # Create the downloads folder
-    
-    print(f"Selected download folder: {download_folder}")
+    def download_playlist(self, playlist_url: str, download_folder: str) -> None:
+        try:
+            self.update_status(f"Starting download from {playlist_url} to {download_folder}...")
 
-    print("1. Enter YouTube Music Playlist URL")
-    print("2. Exit")
+            # Call the download process from the tools module
+            tools.download_proceess(playlist_url)
 
-    choice = input("Choose an option: ")
+            self.update_status(f"Download completed for playlist from {playlist_url}")
+        except Exception as e:
+            self.update_status(f"Error during download: {e}")
 
-    if choice == '1':
-        playlist_url = input("Enter the YouTube Music playlist URL: ")
-        download_playlist(playlist_url, download_folder)  # Download and process the playlist
-        print("Download, renaming, and clean up complete.")
-    elif choice == '2':
-        print("Goodbye!")
-    else:
-        print("Invalid option, please try again.")
+    def update_status(self, message: str) -> None:
+        # Update the status bar with messages
+        status = self.query_one("#status", Static)
+        status.update(message)
+
 
 if __name__ == "__main__":
-    main()
+    app = YouTubeMusicPlaylistApp()
+    app.run()
