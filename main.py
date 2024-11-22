@@ -13,7 +13,8 @@ class YouTubeMusicPlaylistApp(App):
         self.ytmusic = YTMusic()
         self.playlist_data = None
         self.playlist_url = None  # To store the playlist URL for downloading
-        self.download_folder = os.path.expanduser("~/Downloads")  # Default download folder
+        self.download_folder = os.path.expanduser("~/Downloads")  # Default download folder\
+        self.playlist_title = None
 
     def compose(self) -> ComposeResult:
         # Define the UI structure
@@ -78,14 +79,19 @@ class YouTubeMusicPlaylistApp(App):
 
     def download_playlist(self, playlist_url: str, download_folder: str) -> None:
         try:
-            self.update_status(f"Starting download from {playlist_url} to {download_folder}...")
+            
+            playlist_title = self.ytmusic.get_playlist(self.extract_playlist_id(playlist_url))['title']
+                
 
-            # Call the download process from the tools module
-            tools.download_proceess(playlist_url)
+            self.update_status(f"Download is in progress")
 
-            self.update_status(f"Download completed for playlist from {playlist_url}")
+            #add the playlist title as an argument
+            tools.download_proceess(playlist_url, playlist_title)
+
+            self.update_status(f"Download completed")
         except Exception as e:
             self.update_status(f"Error during download: {e}")
+        
 
     def update_status(self, message: str) -> None:
         # Update the status bar with messages

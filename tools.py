@@ -103,9 +103,10 @@ def file_dialog():
 
     return download_folder
 
-def download_proceess(playlist_url):
+def download_proceess(playlist_url, playlist_name):
     LOCAL_FOLDER = os.path.dirname(os.path.abspath(__file__))
-    FOLDER = os.path.join(LOCAL_FOLDER, 'downloads')
+    FOLDER = os.path.join(LOCAL_FOLDER, f'{playlist_name}')
+    ALTERNATIVE_FOLDER = "G:/" 
 
     if os.path.exists(FOLDER):
         import shutil
@@ -116,4 +117,4 @@ def download_proceess(playlist_url):
     os.makedirs(FOLDER)
     print(f"Folder '{FOLDER}' has been created.")
 
-    download_playlist(playlist_url, FOLDER)
+    download_playlist(playlist_url, ALTERNATIVE_FOLDER)
